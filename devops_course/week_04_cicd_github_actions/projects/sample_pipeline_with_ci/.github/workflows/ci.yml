@@ -1,0 +1,101 @@
+# .github/workflows/ci.yml
+# Runs on every push and pull_request to main.
+# Jobs: lint → unit tests with coverage.
+
+name: Pipeline CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.py"
+      - "requirements*.txt"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**.py"
+      - "requirements*.txt"
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # JOB: lint
+  # Fast quality gate — fails in seconds if code has style issues.
+  # ─────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint and Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-lint-${{ hashFiles('requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-lint-
+
+      - name: Install linting tools
+        run: pip install ruff black
+
+      - name: Lint with ruff
+        run: ruff check .
+
+      - name: Check formatting with black
+        run: black --check .
+
+  # ─────────────────────────────────────────────────────────────────
+  # JOB: test
+  # Runs unit tests with coverage. Only starts after lint passes.
+  # ─────────────────────────────────────────────────────────────────
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [lint]  # Don't run tests if linting failed
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          # Invalidates when any requirements file changes
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests with coverage
+        run: |
+          pytest test_pipeline.py \
+            --cov=pipeline \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            --cov-fail-under=70 \
+            -v \
+            --tb=short
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()  # Upload even if tests failed
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 14

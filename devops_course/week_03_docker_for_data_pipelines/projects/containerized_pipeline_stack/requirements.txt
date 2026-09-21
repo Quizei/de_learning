@@ -1,0 +1,10 @@
+# ── Core pipeline dependencies ────────────────────────────────
+# Pin exact versions for reproducible builds.
+# Update versions deliberately, not accidentally.
+
+# Database connectivity
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+
+# Data processing (included so layer cache demo is meaningful)
+pandas==2.1.0

@@ -1,0 +1,127 @@
+# ──────────────────────────────────────────────────────────────
+# docker-compose.yml — Containerized Pipeline Stack
+# ──────────────────────────────────────────────────────────────
+# Two-service local data stack:
+#   postgres  — PostgreSQL 15 database with named volume and healthcheck
+#   pipeline  — Python ETL app, waits for Postgres to be healthy
+#
+# Usage:
+#   cp .env.example .env && nano .env   # fill in your values
+#   make up                             # start everything
+#   make logs                           # watch output
+#   make psql                           # connect to DB
+#   make down                           # stop (keeps data)
+#   make clean                          # stop and delete data
+# ──────────────────────────────────────────────────────────────
+
+services:
+
+  # ─────────────────────────────────────────────────────────────
+  #  POSTGRES — the database
+  # ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15
+    container_name: pipeline_postgres
+
+    # Restart automatically unless explicitly stopped.
+    # Handles: Docker Desktop restarts, machine reboots.
+    restart: unless-stopped
+
+    # Environment variables from .env file.
+    # ${VAR} syntax reads from the .env file in the same directory.
+    # Never hardcode passwords here — this file may be in git.
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+
+    # Expose Postgres to your host machine for:
+    #   - DBeaver, TablePlus, pgAdmin
+    #   - psql on the command line
+    #   - Running pipeline.py locally (outside Docker)
+    ports:
+      - "${DB_PORT:-5432}:5432"
+
+    # Named volume: data persists through container removal.
+    # Postgres stores data files in /var/lib/postgresql/data.
+    # 'postgres_data' is the volume name — Docker manages the location.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    networks:
+      - pipeline_net
+
+    # Healthcheck: tells Docker when Postgres is ACTUALLY ready.
+    # pg_isready is a Postgres utility that checks for connections.
+    # Without this, 'depends_on' would only wait for the container to
+    # START — but Postgres needs 3-10s to finish initialization.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s        # check every 5 seconds
+      timeout: 5s         # fail the check if no response in 5s
+      retries: 5          # mark unhealthy after 5 consecutive failures
+      start_period: 15s   # grace period: don't count failures in first 15s
+
+
+  # ─────────────────────────────────────────────────────────────
+  #  PIPELINE — the Python ETL application
+  # ─────────────────────────────────────────────────────────────
+  pipeline:
+    # Build from the Dockerfile in this directory.
+    # 'make up' runs 'docker-compose up -d --build' which rebuilds
+    # the image whenever the Dockerfile or source changes.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pipeline_app
+
+    # on-failure: restart if the app crashes (non-zero exit code).
+    # Does NOT restart if you 'docker-compose stop' it.
+    restart: on-failure
+
+    # Load all variables from .env as environment variables.
+    # These are available in pipeline.py via os.environ.get().
+    env_file:
+      - .env
+
+    # depends_on with condition: service_healthy means Docker will
+    # NOT start this container until Postgres's healthcheck passes.
+    # This is the correct way to handle startup ordering.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    networks:
+      - pipeline_net
+
+    # Optional bind mount for development:
+    # Uncomment to mount local ./data folder into the container.
+    # Useful if pipeline reads input files from /app/data.
+    # volumes:
+    #   - ./data:/app/data
+
+
+# ──────────────────────────────────────────────────────────────
+#  VOLUMES — named persistent storage
+# ──────────────────────────────────────────────────────────────
+volumes:
+  # postgres_data persists through:
+  #   docker-compose down      (data safe)
+  #   docker-compose stop      (data safe)
+  #   container removal        (data safe)
+  # Data is DELETED by:
+  #   docker-compose down -v   (nukes volume)
+  #   docker volume rm pipeline_postgres_data
+  postgres_data:
+    driver: local
+
+
+# ──────────────────────────────────────────────────────────────
+#  NETWORKS — isolated communication channel
+# ──────────────────────────────────────────────────────────────
+networks:
+  pipeline_net:
+    driver: bridge
+    # Docker creates an internal DNS for this network.
+    # Inside pipeline container: host="postgres" resolves to postgres container.
+    # Outside Docker (your laptop): use localhost:5432 (via ports mapping).

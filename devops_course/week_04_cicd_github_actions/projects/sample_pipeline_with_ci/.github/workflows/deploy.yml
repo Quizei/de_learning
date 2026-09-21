@@ -1,0 +1,96 @@
+# .github/workflows/deploy.yml
+# Triggers only on push to main branch.
+# Builds a Docker image tagged with the git SHA and pushes to Docker Hub.
+#
+# REQUIRED SECRETS (set in repo Settings → Secrets → Actions):
+#   DOCKERHUB_USERNAME    your Docker Hub username
+#   DOCKERHUB_TOKEN       Docker Hub access token (hub.docker.com > Account Settings > Security)
+#   SLACK_WEBHOOK_URL     Slack incoming webhook URL (optional — for notifications)
+#
+# NOTE: The build-and-push step is shown complete but commented out
+# so this file works in a repo without real Docker Hub credentials set up.
+# Remove the comment markers when you have real secrets configured.
+
+name: Deploy Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.py"
+      - "Dockerfile"
+      - "requirements*.txt"
+      - ".github/workflows/deploy.yml"
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        # Enables BuildKit: faster builds, layer caching, multi-platform support
+
+      # ── Authentication ─────────────────────────────────────────────────────
+      # Uncomment when DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets are set:
+      #
+      # - name: Log in to Docker Hub
+      #   uses: docker/login-action@v3
+      #   with:
+      #     username: ${{ secrets.DOCKERHUB_USERNAME }}
+      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ── Build and Push ──────────────────────────────────────────────────────
+      # Image is tagged with:
+      #   :latest       — always points to most recent
+      #   :<sha>        — exact git commit hash (use this for prod deployments)
+      #
+      # Uncomment when secrets are configured:
+      #
+      # - name: Build and push Docker image
+      #   uses: docker/build-push-action@v5
+      #   with:
+      #     context: .
+      #     push: true
+      #     tags: |
+      #       ${{ secrets.DOCKERHUB_USERNAME }}/sample-pipeline:latest
+      #       ${{ secrets.DOCKERHUB_USERNAME }}/sample-pipeline:${{ github.sha }}
+      #     cache-from: type=gha
+      #     cache-to: type=gha,mode=max
+
+      # ── Demo step (replace with real push above) ───────────────────────────
+      - name: Echo image tags (demo — no real push)
+        run: |
+          echo "Would build and push:"
+          echo "  myorg/sample-pipeline:latest"
+          echo "  myorg/sample-pipeline:${{ github.sha }}"
+          echo ""
+          echo "Triggered by: ${{ github.actor }}"
+          echo "Branch: ${{ github.ref }}"
+          echo "Commit: ${{ github.sha }}"
+
+      # ── Notifications ──────────────────────────────────────────────────────
+      - name: Notify Slack on success
+        if: success()
+        # Remove continue-on-error once SLACK_WEBHOOK_URL secret is set
+        continue-on-error: true
+        run: |
+          curl -s -X POST -H 'Content-type: application/json' \
+            --data '{
+              "text": ":white_check_mark: Deploy succeeded: `${{ github.repository }}` @ `${{ github.sha }}` by ${{ github.actor }}"
+            }' \
+            ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notify Slack on failure
+        if: failure()
+        continue-on-error: true
+        run: |
+          curl -s -X POST -H 'Content-type: application/json' \
+            --data '{
+              "text": ":x: Deploy FAILED: `${{ github.repository }}` @ `${{ github.sha }}`. Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }' \
+            ${{ secrets.SLACK_WEBHOOK_URL }}
